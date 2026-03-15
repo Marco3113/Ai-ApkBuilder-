@@ -1,0 +1,514 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>APK Builder</title>
+<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:#020d14;font-family:'IBM Plex Mono',monospace;color:#e0f4ff;min-height:100vh}
+input,textarea,select{font-family:inherit}
+textarea{resize:vertical}
+::-webkit-scrollbar{width:6px}
+::-webkit-scrollbar-track{background:#020d14}
+::-webkit-scrollbar-thumb{background:#0d2535;border-radius:3px}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useRef, useCallback } = React;
+
+const ACCENT = "#00E5FF";
+const BG = "#020d14";
+const CARD = "#071520";
+const BORDER = "#0d2535";
+const MUTED = "#3a6a7f";
+const STEPS = ["Info","Design","Funzioni","Codice","GitHub","Build"];
+
+function generateMainActivity(c) {
+  return `package com.${c.pkg}.app;
+
+import android.Manifest;
+${c.filePicker ? "import android.app.Activity;" : ""}
+import android.content.Intent;
+import android.content.pm.PackageManager;
+import android.graphics.Bitmap;
+import android.graphics.Color;
+import android.net.Uri;
+import android.os.Bundle;
+import android.view.KeyEvent;
+import android.view.View;
+import android.webkit.CookieManager;
+import android.webkit.GeolocationPermissions;
+import android.webkit.PermissionRequest;
+${c.filePicker ? "import android.webkit.ValueCallback;" : ""}
+import android.webkit.WebChromeClient;
+import android.webkit.WebResourceError;
+import android.webkit.WebResourceRequest;
+import android.webkit.WebSettings;
+import android.webkit.WebView;
+import android.webkit.WebViewClient;
+import android.widget.ProgressBar;
+import android.widget.TextView;
+import android.widget.Toast;
+import androidx.annotation.NonNull;
+import androidx.appcompat.app.AppCompatActivity;
+import androidx.core.app.ActivityCompat;
+import androidx.core.content.ContextCompat;
+
+public class MainActivity extends AppCompatActivity {
+    private static final String URL = "${c.url}";
+    private static final int MIC_CODE = 1001;
+    ${c.filePicker ? "private static final int FILE_CODE = 1002;\n    private ValueCallback<Uri[]> fileCb;" : ""}
+    private WebView webView;
+    private ProgressBar progressBar;
+    private TextView errorView;
+
+    @Override
+    protected void onCreate(Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
+        getWindow().setStatusBarColor(Color.parseColor("${c.bgColor}"));
+        setContentView(R.layout.activity_main);
+        webView = findViewById(R.id.webView);
+        progressBar = findViewById(R.id.progressBar);
+        errorView = findViewById(R.id.errorView);
+        ${c.mic ? "requestMic();" : ""}
+        setupCookies();
+        setupWebView();
+        webView.loadUrl(URL);
+        ${c.refresh ? 'findViewById(R.id.refreshBtn).setOnClickListener(v -> webView.reload());' : ""}
+    }
+
+    private void setupCookies() {
+        CookieManager cm = CookieManager.getInstance();
+        cm.setAcceptCookie(true);
+        cm.setAcceptThirdPartyCookies(webView, true);
+    }
+
+    private void setupWebView() {
+        WebSettings s = webView.getSettings();
+        s.setJavaScriptEnabled(true);
+        s.setDomStorageEnabled(true);
+        s.setDatabaseEnabled(true);
+        s.setMediaPlaybackRequiresUserGesture(false);
+        s.setCacheMode(WebSettings.LOAD_DEFAULT);
+        s.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
+        s.setAllowFileAccess(true);
+        s.setAllowContentAccess(true);
+        webView.setWebViewClient(new WebViewClient() {
+            @Override public void onPageStarted(WebView v, String u, Bitmap f) { progressBar.setVisibility(View.VISIBLE); errorView.setVisibility(View.GONE); }
+            @Override public void onPageFinished(WebView v, String u) { progressBar.setVisibility(View.GONE); CookieManager.getInstance().flush(); }
+            @Override public void onReceivedError(WebView v, WebResourceRequest r, WebResourceError e) { if (r.isForMainFrame()) { progressBar.setVisibility(View.GONE); errorView.setVisibility(View.VISIBLE); } }
+        });
+        webView.setWebChromeClient(new WebChromeClient() {
+            @Override public void onProgressChanged(WebView v, int p) { progressBar.setProgress(p); if (p==100) progressBar.setVisibility(View.GONE); }
+            @Override public void onPermissionRequest(PermissionRequest r) { r.grant(r.getResources()); }
+            @Override public void onGeolocationPermissionsShowPrompt(String o, GeolocationPermissions.Callback cb) { cb.invoke(o, true, false); }
+            ${c.filePicker ? `@Override
+            public boolean onShowFileChooser(WebView v, ValueCallback<Uri[]> cb, FileChooserParams p) {
+                if (fileCb != null) fileCb.onReceiveValue(null);
+                fileCb = cb;
+                Intent i = new Intent(Intent.ACTION_GET_CONTENT);
+                i.addCategory(Intent.CATEGORY_OPENABLE);
+                i.setType("*/*");
+                startActivityForResult(Intent.createChooser(i, "Seleziona file"), FILE_CODE);
+                return true;
+            }` : ""}
+        });
+    }
+    ${c.filePicker ? `
+    @Override
+    protected void onActivityResult(int req, int res, Intent data) {
+        super.onActivityResult(req, res, data);
+        if (req == FILE_CODE) {
+            if (fileCb == null) return;
+            Uri[] r = (res == Activity.RESULT_OK && data != null && data.getData() != null) ? new Uri[]{data.getData()} : null;
+            fileCb.onReceiveValue(r);
+            fileCb = null;
+        }
+    }` : ""}
+    ${c.mic ? `
+    private void requestMic() {
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED)
+            ActivityCompat.requestPermissions(this, new String[]{Manifest.permission.RECORD_AUDIO}, MIC_CODE);
+    }
+    @Override public void onRequestPermissionsResult(int code, @NonNull String[] p, @NonNull int[] r) {
+        super.onRequestPermissionsResult(code, p, r);
+        if (code == MIC_CODE && r.length > 0 && r[0] == PackageManager.PERMISSION_GRANTED)
+            Toast.makeText(this, "Microfono abilitato", Toast.LENGTH_SHORT).show();
+    }` : ""}
+    @Override public boolean onKeyDown(int k, KeyEvent e) {
+        if (k == KeyEvent.KEYCODE_BACK && webView.canGoBack()) { webView.goBack(); return true; }
+        return super.onKeyDown(k, e);
+    }
+    @Override protected void onResume() { super.onResume(); webView.onResume(); }
+    @Override protected void onPause() { super.onPause(); webView.onPause(); CookieManager.getInstance().flush(); }
+    @Override protected void onDestroy() { CookieManager.getInstance().flush(); webView.destroy(); super.onDestroy(); }
+}`;
+}
+
+function generateAllFiles(c, customCode) {
+  const mainActivity = customCode || generateMainActivity(c);
+  const manifest = `<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.${c.pkg}.app">
+    <uses-permission android:name="android.permission.INTERNET"/>
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
+    ${c.mic ? '<uses-permission android:name="android.permission.RECORD_AUDIO"/>' : ""}
+    ${c.media ? '<uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>\n    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK"/>' : ""}
+    <application android:allowBackup="true" android:icon="@drawable/ic_logo" android:roundIcon="@drawable/ic_logo"
+        android:label="${c.name}" android:theme="@style/AppTheme" android:usesCleartextTraffic="true"
+        android:networkSecurityConfig="@xml/network_security_config">
+        <activity android:name=".MainActivity" android:exported="true" android:launchMode="singleTop" android:configChanges="orientation|screenSize">
+            <intent-filter><action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LAUNCHER"/></intent-filter>
+        </activity>
+    </application>
+</manifest>`;
+  const layout = `<?xml version="1.0" encoding="utf-8"?>
+<RelativeLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    ${c.refresh ? 'xmlns:app="http://schemas.android.com/apk/res-auto"' : ""}
+    android:layout_width="match_parent" android:layout_height="match_parent" android:background="${c.bgColor}">
+    <WebView android:id="@+id/webView" android:layout_width="match_parent" android:layout_height="match_parent"/>
+    <ProgressBar android:id="@+id/progressBar" style="@style/Widget.AppCompat.ProgressBar.Horizontal"
+        android:layout_width="match_parent" android:layout_height="4dp" android:layout_alignParentTop="true"
+        android:progressTint="${c.accent}" android:max="100" android:visibility="gone"/>
+    <TextView android:id="@+id/errorView" android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:layout_centerInParent="true" android:gravity="center" android:padding="32dp"
+        android:text="⚠️ Nessuna connessione" android:textColor="${c.accent}" android:textSize="18sp" android:visibility="gone"/>
+    ${c.refresh ? `<com.google.android.material.floatingactionbutton.FloatingActionButton
+        android:id="@+id/refreshBtn" android:layout_width="wrap_content" android:layout_height="wrap_content"
+        android:layout_alignParentBottom="true" android:layout_alignParentEnd="true" android:layout_margin="24dp"
+        android:src="@android:drawable/ic_menu_rotate" app:backgroundTint="${c.accent}" app:tint="${c.bgColor}"/>` : ""}
+</RelativeLayout>`;
+  const styles = `<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="AppTheme" parent="Theme.AppCompat.NoActionBar">
+        <item name="colorPrimary">${c.accent}</item>
+        <item name="colorPrimaryDark">${c.bgColor}</item>
+        <item name="colorAccent">${c.accent}</item>
+        <item name="android:windowBackground">${c.bgColor}</item>
+        <item name="android:statusBarColor">${c.bgColor}</item>
+        <item name="android:navigationBarColor">${c.bgColor}</item>
+    </style>
+</resources>`;
+  const appBuild = `plugins { id 'com.android.application' }
+android {
+    namespace 'com.${c.pkg}.app'
+    compileSdk 34
+    defaultConfig { applicationId "com.${c.pkg}.app"; minSdk 26; targetSdk 34; versionCode 1; versionName "1.0" }
+    buildTypes { release { minifyEnabled false; proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro' } }
+    compileOptions { sourceCompatibility JavaVersion.VERSION_11; targetCompatibility JavaVersion.VERSION_11 }
+}
+dependencies {
+    implementation 'androidx.appcompat:appcompat:1.6.1'
+    implementation 'com.google.android.material:material:1.11.0'
+    implementation 'androidx.constraintlayout:constraintlayout:2.1.4'
+    ${c.media ? "implementation 'androidx.media:media:1.7.0'" : ""}
+}`;
+  return {
+    "build.gradle": `plugins { id 'com.android.application' version '8.7.0' apply false }`,
+    "settings.gradle": `pluginManagement { repositories { google(); mavenCentral(); gradlePluginPortal() } }\ndependencyResolutionManagement { repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS); repositories { google(); mavenCentral() } }\nrootProject.name = "${c.name.replace(/\s+/g,"")}";\ninclude ':app'`,
+    "gradle.properties": `android.useAndroidX=true\nandroid.enableJetifier=true\norg.gradle.jvmargs=-Xmx2048m`,
+    "gradlew": `#!/bin/sh\nexec gradle "$@"`,
+    "app/build.gradle": appBuild,
+    "app/proguard-rules.pro": `-keep class com.${c.pkg}.app.** { *; }`,
+    "app/src/main/AndroidManifest.xml": manifest,
+    "app/src/main/java/com/APP_PKG/app/MainActivity.java": mainActivity.replace(/APP_PKG/g, c.pkg),
+    "app/src/main/res/layout/activity_main.xml": layout,
+    "app/src/main/res/values/strings.xml": `<?xml version="1.0" encoding="utf-8"?><resources><string name="app_name">${c.name}</string></resources>`,
+    "app/src/main/res/values/styles.xml": styles,
+    "app/src/main/res/xml/network_security_config.xml": `<?xml version="1.0" encoding="utf-8"?><network-security-config><base-config cleartextTrafficPermitted="false"/></network-security-config>`,
+    "app/src/main/res/drawable/ic_logo.xml": `<?xml version="1.0" encoding="utf-8"?>\n<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="oval">\n    <solid android:color="${c.bgColor}"/>\n    <stroke android:width="3dp" android:color="${c.accent}"/>\n</shape>`,
+    ".github/workflows/build.yml": `name: Build APK\non:\n  push:\n    branches: [ main ]\n  workflow_dispatch:\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n      - uses: actions/setup-java@v4\n        with: { java-version: '17', distribution: 'temurin' }\n      - uses: android-actions/setup-android@v3\n      - run: chmod +x gradlew\n      - run: ./gradlew assembleDebug\n      - uses: actions/upload-artifact@v4\n        with: { name: ${c.name.replace(/\s+/g,"-")}-APK, path: app/build/outputs/apk/debug/app-debug.apk }`,
+  };
+}
+
+async function pushToGitHub(token, repoName, files) {
+  const headers = { "Authorization": `token ${token}`, "Accept": "application/vnd.github.v3+json", "Content-Type": "application/json" };
+  const createRes = await fetch("https://api.github.com/user/repos", { method: "POST", headers, body: JSON.stringify({ name: repoName, private: false, auto_init: false }) });
+  if (!createRes.ok) { const e = await createRes.json(); throw new Error(e.message); }
+  const repo = await createRes.json();
+  for (const [path, content] of Object.entries(files)) {
+    await fetch(`https://api.github.com/repos/${repo.full_name}/contents/${path}`, {
+      method: "PUT", headers,
+      body: JSON.stringify({ message: `Add ${path}`, content: btoa(unescape(encodeURIComponent(content))) })
+    });
+  }
+  return repo;
+}
+
+// ─── Phone Preview ────────────────────────────────────────────────────────────
+function PhonePreview({ config, icon }) {
+  return (
+    <div style={{ display:"flex", flexDirection:"column", alignItems:"center", gap:12 }}>
+      <div style={{ fontSize:11, color:MUTED, letterSpacing:"0.1em", textTransform:"uppercase" }}>Preview</div>
+      <div style={{ width:180, height:320, borderRadius:28, border:`2px solid ${BORDER}`, background:"#000", overflow:"hidden", position:"relative", boxShadow:"0 0 40px rgba(0,229,255,0.08)" }}>
+        <div style={{ height:24, background:config.bgColor, display:"flex", alignItems:"center", justifyContent:"flex-end", padding:"0 10px", gap:4 }}>
+          <div style={{ width:30, height:6, background:config.accent, borderRadius:3, opacity:0.7 }}/>
+        </div>
+        <div style={{ flex:1, background:config.bgColor, height:"calc(100% - 24px - 48px)", display:"flex", alignItems:"center", justifyContent:"center", flexDirection:"column", gap:8 }}>
+          <div style={{ fontSize:11, color:config.accent, opacity:0.4 }}>{config.url || "your-app.lovable.app"}</div>
+          <div style={{ width:80, height:3, background:config.accent, borderRadius:2, opacity:0.3 }}/>
+          <div style={{ width:60, height:3, background:config.accent, borderRadius:2, opacity:0.2 }}/>
+        </div>
+        <div style={{ height:48, background:config.bgColor, borderTop:`1px solid ${config.accent}22`, display:"flex", alignItems:"center", justifyContent:"center" }}>
+          <div style={{ width:40, height:4, background:config.accent, borderRadius:2, opacity:0.5 }}/>
+        </div>
+      </div>
+      <div style={{ textAlign:"center" }}>
+        <div style={{ width:56, height:56, borderRadius:14, margin:"0 auto 6px", background: icon ? `url(${icon}) center/cover` : config.bgColor, border:`2px solid ${config.accent}`, display:"flex", alignItems:"center", justifyContent:"center", fontSize:22 }}>
+          {!icon && "📱"}
+        </div>
+        <div style={{ fontSize:11, color:"#e0f4ff", fontWeight:600 }}>{config.name || "App"}</div>
+      </div>
+    </div>
+  );
+}
+
+function Field({ label, value, onChange, placeholder, type="text", mono=false }) {
+  const [focused, setFocused] = useState(false);
+  return (
+    <div style={{ marginBottom:16 }}>
+      <label style={{ display:"block", color:MUTED, fontSize:11, fontWeight:700, marginBottom:6, letterSpacing:"0.1em", textTransform:"uppercase" }}>{label}</label>
+      <input type={type} value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder}
+        style={{ width:"100%", padding:"10px 14px", background:"#030f1a", border:`1px solid ${focused ? ACCENT : BORDER}`, borderRadius:8, color:"#e0f4ff", fontSize:14, outline:"none", boxSizing:"border-box", fontFamily: mono ? "monospace" : "inherit" }}
+        onFocus={() => setFocused(true)} onBlur={() => setFocused(false)}/>
+    </div>
+  );
+}
+
+function Tog({ label, desc, val, onChange }) {
+  return (
+    <div onClick={() => onChange(!val)} style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:"12px 14px", background: val ? "#071d2a" : "#030f1a", border:`1px solid ${val ? ACCENT+"55" : BORDER}`, borderRadius:10, cursor:"pointer", marginBottom:10, transition:"all 0.2s" }}>
+      <div>
+        <div style={{ color:"#e0f4ff", fontSize:13, fontWeight:600 }}>{label}</div>
+        {desc && <div style={{ color:MUTED, fontSize:11, marginTop:2 }}>{desc}</div>}
+      </div>
+      <div style={{ width:38, height:20, borderRadius:10, background: val ? ACCENT : "#0d2535", position:"relative", flexShrink:0, transition:"background 0.2s" }}>
+        <div style={{ width:14, height:14, borderRadius:"50%", background: val ? "#001525" : "#3a6a7a", position:"absolute", top:3, left: val ? 21 : 3, transition:"left 0.2s" }}/>
+      </div>
+    </div>
+  );
+}
+
+function ColorRow({ label, value, onChange }) {
+  return (
+    <div style={{ display:"flex", alignItems:"center", gap:12, marginBottom:16 }}>
+      <input type="color" value={value} onChange={e => onChange(e.target.value)}
+        style={{ width:40, height:40, borderRadius:8, border:"none", background:"none", cursor:"pointer", padding:0, flexShrink:0 }}/>
+      <div>
+        <div style={{ color:MUTED, fontSize:11, fontWeight:700, letterSpacing:"0.1em", textTransform:"uppercase" }}>{label}</div>
+        <div style={{ color:"#e0f4ff", fontSize:13, fontFamily:"monospace" }}>{value}</div>
+      </div>
+    </div>
+  );
+}
+
+function StepDot({ step, current, label, onClick }) {
+  const done = step < current;
+  const active = step === current;
+  return (
+    <div onClick={() => done && onClick(step)} style={{ display:"flex", alignItems:"center", gap:8, cursor: done ? "pointer" : "default" }}>
+      <div style={{ width:28, height:28, borderRadius:"50%", background: active ? ACCENT : done ? "#071d2a" : "#030f1a", border:`2px solid ${active || done ? ACCENT : BORDER}`, display:"flex", alignItems:"center", justifyContent:"center", fontSize:11, fontWeight:700, color: active ? "#001525" : done ? ACCENT : MUTED, flexShrink:0 }}>
+        {done ? "✓" : step+1}
+      </div>
+      <span style={{ fontSize:12, color: active ? "#e0f4ff" : done ? ACCENT : MUTED, fontWeight: active ? 700 : 400 }}>{label}</span>
+    </div>
+  );
+}
+
+export default function APKBuilder() {
+  const [step, setStep] = useState(0);
+  const [config, setConfig] = useState({ name:"", url:"", pkg:"", bgColor:"#001525", accent:"#00E5FF", mic:false, media:false, refresh:false, filePicker:true, pwa:false });
+  const [icon, setIcon] = useState(null);
+  const [customCode, setCustomCode] = useState("");
+  const [editingFile, setEditingFile] = useState("app/src/main/java/com/APP_PKG/app/MainActivity.java");
+  const [ghToken, setGhToken] = useState("");
+  const [repoName, setRepoName] = useState("");
+  const [building, setBuilding] = useState(false);
+  const [result, setResult] = useState(null);
+  const [error, setError] = useState("");
+  const fileRef = useRef();
+  const set = (k,v) => setConfig(c => ({...c,[k]:v}));
+  const files = generateAllFiles(config, customCode || null);
+  const fileKeys = Object.keys(files);
+  const canNext = () => {
+    if (step === 0) return config.name && config.url && config.pkg;
+    if (step === 4) return ghToken && repoName;
+    return true;
+  };
+  const handleBuild = async () => {
+    setBuilding(true); setError("");
+    try {
+      const repo = await pushToGitHub(ghToken, repoName, generateAllFiles(config, customCode || null));
+      setResult(repo); setStep(5);
+    } catch(e) { setError(e.message); }
+    setBuilding(false);
+  };
+  const handleIconUpload = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = ev => setIcon(ev.target.result);
+    reader.readAsDataURL(file);
+  };
+
+  return (
+    <div style={{ minHeight:"100vh", background:BG }}>
+      {/* Header */}
+      <div style={{ borderBottom:`1px solid ${BORDER}`, padding:"14px 24px", display:"flex", alignItems:"center", gap:16, background:"#030f1a" }}>
+        <span style={{ fontSize:20 }}>📦</span>
+        <span style={{ fontWeight:700, fontSize:15, color:"#e0f4ff", letterSpacing:"0.05em" }}>APK Builder</span>
+        <div style={{ flex:1 }}/>
+        <div style={{ fontSize:11, color:MUTED }}>by WebApp → Android</div>
+      </div>
+
+      <div style={{ maxWidth:960, margin:"0 auto", padding:"32px 20px", display:"grid", gridTemplateColumns:"180px 1fr 200px", gap:32, alignItems:"start" }}>
+        {/* Sidebar steps */}
+        <div style={{ display:"flex", flexDirection:"column", gap:12, paddingTop:4 }}>
+          {STEPS.map((s,i) => <StepDot key={i} step={i} current={step} label={s} onClick={setStep}/>)}
+        </div>
+
+        {/* Main content */}
+        <div>
+          {/* STEP 0 — Info */}
+          {step === 0 && (
+            <div>
+              <h2 style={{ color:"#e0f4ff", fontSize:18, fontWeight:700, marginBottom:6 }}>Info app</h2>
+              <p style={{ color:MUTED, fontSize:12, marginBottom:24 }}>Inserisci i dati base della tua app.</p>
+              <Field label="Nome app" value={config.name} onChange={v=>set("name",v)} placeholder="La Mia App"/>
+              <Field label="URL da caricare" value={config.url} onChange={v=>set("url",v)} placeholder="https://mia-app.lovable.app" mono/>
+              <Field label="Package ID" value={config.pkg} onChange={v=>set("pkg",v.toLowerCase().replace(/[^a-z0-9]/g,""))} placeholder="miapp" mono/>
+              <div style={{ background:"#030f1a", border:`1px solid ${BORDER}`, borderRadius:10, padding:"12px 14px", fontSize:11, color:MUTED, marginTop:8 }}>
+                Il package sarà: <span style={{ color:ACCENT }}>com.{config.pkg||"miapp"}.app</span>
+              </div>
+            </div>
+          )}
+
+          {/* STEP 1 — Design */}
+          {step === 1 && (
+            <div>
+              <h2 style={{ color:"#e0f4ff", fontSize:18, fontWeight:700, marginBottom:6 }}>Design</h2>
+              <p style={{ color:MUTED, fontSize:12, marginBottom:24 }}>Scegli colori e icona.</p>
+              <ColorRow label="Colore di sfondo" value={config.bgColor} onChange={v=>set("bgColor",v)}/>
+              <ColorRow label="Colore accent" value={config.accent} onChange={v=>set("accent",v)}/>
+              <div style={{ marginTop:16 }}>
+                <label style={{ display:"block", color:MUTED, fontSize:11, fontWeight:700, marginBottom:8, letterSpacing:"0.1em", textTransform:"uppercase" }}>Icona app (opzionale)</label>
+                <input type="file" accept="image/*" ref={fileRef} onChange={handleIconUpload} style={{ display:"none" }}/>
+                <div onClick={() => fileRef.current.click()} style={{ padding:"14px 20px", background:"#030f1a", border:`1px dashed ${BORDER}`, borderRadius:10, color:MUTED, fontSize:12, cursor:"pointer", textAlign:"center", transition:"border-color 0.2s" }}
+                  onMouseEnter={e=>e.currentTarget.style.borderColor=ACCENT} onMouseLeave={e=>e.currentTarget.style.borderColor=BORDER}>
+                  {icon ? "✓ Icona caricata — clicca per cambiare" : "📁 Clicca per caricare un'icona PNG/JPG"}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* STEP 2 — Funzioni */}
+          {step === 2 && (
+            <div>
+              <h2 style={{ color:"#e0f4ff", fontSize:18, fontWeight:700, marginBottom:6 }}>Funzionalità</h2>
+              <p style={{ color:MUTED, fontSize:12, marginBottom:24 }}>Attiva le funzioni che ti servono.</p>
+              <Tog label="🎤 Microfono" desc="Richiede permesso RECORD_AUDIO" val={config.mic} onChange={v=>set("mic",v)}/>
+              <Tog label="🎵 Media in background" desc="Permessi FOREGROUND_SERVICE_MEDIA_PLAYBACK" val={config.media} onChange={v=>set("media",v)}/>
+              <Tog label="🔄 Pulsante refresh" desc="FAB flottante per ricaricare la pagina" val={config.refresh} onChange={v=>set("refresh",v)}/>
+              <Tog label="📎 File picker" desc="Permette upload di file dalla WebView" val={config.filePicker} onChange={v=>set("filePicker",v)}/>
+            </div>
+          )}
+
+          {/* STEP 3 — Codice */}
+          {step === 3 && (
+            <div>
+              <h2 style={{ color:"#e0f4ff", fontSize:18, fontWeight:700, marginBottom:6 }}>Codice generato</h2>
+              <p style={{ color:MUTED, fontSize:12, marginBottom:16 }}>Modifica i file prima del push su GitHub.</p>
+              <div style={{ display:"flex", gap:8, flexWrap:"wrap", marginBottom:16 }}>
+                {fileKeys.map(k => (
+                  <div key={k} onClick={() => setEditingFile(k)} style={{ padding:"4px 10px", borderRadius:6, fontSize:10, background: editingFile===k ? "#071d2a" : "#030f1a", border:`1px solid ${editingFile===k ? ACCENT+"55" : BORDER}`, color: editingFile===k ? ACCENT : MUTED, cursor:"pointer", fontFamily:"monospace" }}>
+                    {k.split("/").pop()}
+                  </div>
+                ))}
+              </div>
+              <div style={{ fontSize:10, color:MUTED, marginBottom:6, fontFamily:"monospace" }}>{editingFile}</div>
+              <textarea value={customCode && editingFile === "app/src/main/java/com/APP_PKG/app/MainActivity.java" ? customCode : (files[editingFile]||"")}
+                onChange={e => { if (editingFile === "app/src/main/java/com/APP_PKG/app/MainActivity.java") setCustomCode(e.target.value); }}
+                style={{ width:"100%", height:340, padding:"12px 14px", background:"#030f1a", border:`1px solid ${BORDER}`, borderRadius:8, color:"#e0f4ff", fontSize:11, fontFamily:"monospace", outline:"none", lineHeight:1.6 }}
+                spellCheck={false}
+                onFocus={e=>e.target.style.borderColor=ACCENT} onBlur={e=>e.target.style.borderColor=BORDER}
+                readOnly={editingFile !== "app/src/main/java/com/APP_PKG/app/MainActivity.java"}
+              />
+              {editingFile !== "app/src/main/java/com/APP_PKG/app/MainActivity.java" && (
+                <div style={{ fontSize:10, color:MUTED, marginTop:6 }}>Solo MainActivity.java è modificabile in questo step.</div>
+              )}
+            </div>
+          )}
+
+          {/* STEP 4 — GitHub */}
+          {step === 4 && (
+            <div>
+              <h2 style={{ color:"#e0f4ff", fontSize:18, fontWeight:700, marginBottom:6 }}>Push su GitHub</h2>
+              <p style={{ color:MUTED, fontSize:12, marginBottom:24 }}>Inserisci il tuo token GitHub e il nome della repo. GitHub Actions builderà l'APK automaticamente.</p>
+              <div style={{ background:"#030f1a", border:`1px solid ${BORDER}`, borderRadius:10, padding:"12px 14px", fontSize:11, color:MUTED, marginBottom:20, lineHeight:1.7 }}>
+                💡 Genera il token su <span style={{ color:ACCENT }}>github.com → Settings → Developer settings → Personal access tokens</span><br/>
+                Permessi necessari: <span style={{ color:ACCENT }}>repo</span> (full control)
+              </div>
+              <Field label="GitHub Personal Access Token" value={ghToken} onChange={setGhToken} placeholder="ghp_xxxxxxxxxxxx" type="password" mono/>
+              <Field label="Nome repository" value={repoName} onChange={setRepoName} placeholder="mia-app-android" mono/>
+              {error && <div style={{ padding:"10px 14px", background:"#1a0505", border:"1px solid #ff4444", borderRadius:8, color:"#ff6666", fontSize:12, marginTop:8 }}>{error}</div>}
+            </div>
+          )}
+
+          {/* STEP 5 — Build */}
+          {step === 5 && result && (
+            <div>
+              <h2 style={{ color:ACCENT, fontSize:18, fontWeight:700, marginBottom:6 }}>✓ Push completato!</h2>
+              <p style={{ color:MUTED, fontSize:12, marginBottom:24 }}>Il workflow GitHub Actions sta buildando il tuo APK.</p>
+              <div style={{ background:"#030f1a", border:`1px solid ${ACCENT}33`, borderRadius:12, padding:"20px 24px", lineHeight:2 }}>
+                <div style={{ fontSize:12, color:MUTED }}>Repository</div>
+                <a href={result.html_url} target="_blank" style={{ color:ACCENT, fontSize:14, fontWeight:700 }}>{result.full_name}</a>
+                <div style={{ fontSize:12, color:MUTED, marginTop:12 }}>Per scaricare l'APK:</div>
+                <a href={result.html_url+"/actions"} target="_blank" style={{ color:ACCENT, fontSize:13 }}>→ {result.html_url}/actions</a>
+                <div style={{ fontSize:11, color:MUTED, marginTop:16, lineHeight:1.8 }}>
+                  1. Aspetta che il workflow finisca (~3 min)<br/>
+                  2. Clicca sul run completato<br/>
+                  3. Scarica l'artifact <strong style={{ color:"#e0f4ff" }}>{config.name.replace(/\s+/g,"-")}-APK</strong>
+                </div>
+              </div>
+              <div onClick={() => { setStep(0); setResult(null); setError(""); }} style={{ marginTop:20, padding:"10px 20px", background:"#030f1a", border:`1px solid ${BORDER}`, borderRadius:8, color:MUTED, fontSize:12, cursor:"pointer", display:"inline-block" }}>
+                ← Crea un'altra app
+              </div>
+            </div>
+          )}
+
+          {/* Navigation */}
+          {step < 5 && (
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginTop:32, paddingTop:20, borderTop:`1px solid ${BORDER}` }}>
+              {step > 0 ? (
+                <div onClick={() => setStep(s=>s-1)} style={{ padding:"10px 24px", background:"#030f1a", border:`1px solid ${BORDER}`, borderRadius:8, color:MUTED, fontSize:13, cursor:"pointer" }}>← Indietro</div>
+              ) : <div/>}
+              {step < 4 ? (
+                <div onClick={() => canNext() && setStep(s=>s+1)} style={{ padding:"10px 28px", background: canNext() ? ACCENT : "#0d2535", borderRadius:8, color: canNext() ? "#001525" : MUTED, fontSize:13, fontWeight:700, cursor: canNext() ? "pointer" : "not-allowed", transition:"all 0.2s" }}>
+                  Avanti →
+                </div>
+              ) : (
+                <div onClick={() => !building && canNext() && handleBuild()} style={{ padding:"10px 28px", background: building ? "#0d2535" : canNext() ? ACCENT : "#0d2535", borderRadius:8, color: building || !canNext() ? MUTED : "#001525", fontSize:13, fontWeight:700, cursor: building || !canNext() ? "not-allowed" : "pointer", display:"flex", alignItems:"center", gap:8, transition:"all 0.2s" }}>
+                  {building ? "⏳ Push in corso..." : "🚀 Pusha su GitHub"}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* Phone preview */}
+        <PhonePreview config={config} icon={icon}/>
+      </div>
+    </div>
+  );
+}
+
+const root = ReactDOM.createRoot(document.getElementById("root"));
+root.render(<APKBuilder/>);
+</script>
+</body>
+</html>

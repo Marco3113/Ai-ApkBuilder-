@@ -1,0 +1,2 @@
+-keep class com.apkbuilder.app.** { *; }
+-keepattributes *Annotation*
