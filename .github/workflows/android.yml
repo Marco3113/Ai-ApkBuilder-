@@ -8,6 +8,7 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -20,6 +21,50 @@ jobs:
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
+
+      - name: Restructure flat files into Android project layout
+        run: |
+          mkdir -p app/src/main/java/com/apkbuilder/app
+          mkdir -p app/src/main/res/layout
+          mkdir -p app/src/main/res/values
+          mkdir -p app/src/main/res/xml
+          mkdir -p app/src/main/res/drawable
+          mkdir -p app/src/main/assets
+
+          mv AndroidManifest.xml         app/src/main/
+          mv MainActivity.java           app/src/main/java/com/apkbuilder/app/
+          mv activity_main.xml           app/src/main/res/layout/
+          mv strings.xml                 app/src/main/res/values/
+          mv styles.xml                  app/src/main/res/values/
+          mv network_security_config.xml app/src/main/res/xml/
+          mv ic_logo.xml                 app/src/main/res/drawable/
+          mv index.html                  app/src/main/assets/
+          mv proguard-rules.pro          app/
+
+          cat > app/build.gradle << 'EOF'
+plugins { id 'com.android.application' }
+android {
+    namespace 'com.apkbuilder.app'
+    compileSdk 34
+    defaultConfig {
+        applicationId "com.apkbuilder.app"
+        minSdk 26; targetSdk 34
+        versionCode 1; versionName "1.0"
+    }
+    buildTypes { release { minifyEnabled false; proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro' } }
+    compileOptions { sourceCompatibility JavaVersion.VERSION_11; targetCompatibility JavaVersion.VERSION_11 }
+}
+dependencies {
+    implementation 'androidx.appcompat:appcompat:1.6.1'
+    implementation 'com.google.android.material:material:1.11.0'
+    implementation 'androidx.constraintlayout:constraintlayout:2.1.4'
+}
+EOF
+
+          printf 'plugins { id "com.android.application" version "8.7.0" apply false }\n' > build.gradle
+
+          echo "=== Final structure ==="
+          find . -not -path './.git/*' | sort
 
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
